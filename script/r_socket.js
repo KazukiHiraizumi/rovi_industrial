@@ -27,6 +27,7 @@ let Config={
   check_frame_id:'',
   fitness:'fitness',
   x1keys:[],
+  x1interlock:'',
   reverse_frame_id:'',
   reverse_direction:1,
 };
@@ -190,6 +191,17 @@ setImmediate(async function(){
     async function X1(){
       let t0=ros.Time.now();
       TX1=t0;
+      if(Config.x1interlock.length>0){
+        try{
+          let f=await rosNode.getParam(Config.x1interlock);
+          if(!f){
+            setTimeout(function(){ respNG(conn,protocol,913);},100);
+            return;
+          }
+        }
+        catch(e){
+        }
+      }
       let tfs;
       try{
         tfs=await protocol.decode(msg.substr(2).trim());
@@ -420,6 +432,7 @@ setImmediate(async function(){
         else msg+=')';
       } while(true);
       buffer=msg='';
+      stat_out(false);
     });
     conn.on('close', function(){
       if(wdt!=null) clearTimeout(wdt);
