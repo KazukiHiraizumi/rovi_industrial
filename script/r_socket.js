@@ -25,6 +25,7 @@ let Config={
   target_frame_id:'solve0',
   update_frame_id:'',
   check_frame_id:'',
+  rebase_frame_id:'baseVT',
   fitness:'fitness',
   x1keys:[],
   x1interlock:'',
@@ -32,7 +33,8 @@ let Config={
   reverse_direction:1,
 };
 let Param={
-  post:''
+  post:'',
+  x1interlock:true
 };
 let Score={'fitness':[0,0]};
 
@@ -191,16 +193,9 @@ setImmediate(async function(){
     async function X1(){
       let t0=ros.Time.now();
       TX1=t0;
-      if(Config.x1interlock.length>0){
-        try{
-          let f=await rosNode.getParam(Config.x1interlock);
-          if(!f){
-            setTimeout(function(){ respNG(conn,protocol,913);},100);
-            return;
-          }
-        }
-        catch(e){
-        }
+      if(!Param.x1interlock){
+        respNG(conn,protocol,913);
+        return;
       }
       let tfs;
       try{
@@ -211,8 +206,8 @@ setImmediate(async function(){
         respNG(conn,protocol,999); //decode error
         return;
       }
-      ros.log.warn("rsocket::X1 tf parse "+JSON.stringify(tfs));
       if(tfs.length>0 && tfs[0].hasOwnProperty('translation') && Config.update_frame_id.length>0){
+        ros.log.warn("rsocket::X1::update_frame"+JSON.stringify(tfs));
         let tf=tf_update(tfs[0],Config.update_frame_id);
         pub_tf.publish(tf);
       }
@@ -239,7 +234,7 @@ setImmediate(async function(){
             if(Config.x1keys.length==0) respOK(conn,protocol);
             else{
               let vals=Config.x1keys.map(k=>Score[k]);
-              respOK(conn,protocol,vals.toString());
+              respOK(conn,protocol,'['+vals.toString()+']');
               }
            }
         }
@@ -297,21 +292,29 @@ setImmediate(async function(){
         }
         catch(err){
           ros.log.error('tf_lookup call error');
-          respNG(conn,protocol,923); //failed to lookup
+          respNG(conn,protocol,924); //failed to lookup
           return;
         }
         if(res.data.length==0){
           ros.log.error('tf_lookup returned null');
-          respNG(conn,protocol,923); //failed to lookup
+          respNG(conn,protocol,924); //failed to lookup
           return;
         }
         let tf=JSON.parse(res.data);
         if(!tf.hasOwnProperty('translation')){
           ros.log.error('tf_lookup returned but Transform');
-          respNG(conn,protocol,923); //failed to lookup
+          respNG(conn,protocol,924); //failed to lookup
           return;
         }
-        ros.log.info("rsocket tf:"+res.data);
+       ros.log.info("rsocket tf:"+res.data);
+       setTimeout(()=>{
+         let tfs=new geometry_msgs.TransformStamped();
+          tfs.header.stamp=ros.Time.now();
+          tfs.header.frame_id='';
+          tfs.child_frame_id=Config.rebase_frame_id;
+          tfs.transform=tf;
+          pub_tf.publish(tfs);
+        },500);
         let cod;
         try{
           cod=await protocol.encode([tf]);
@@ -410,7 +413,7 @@ setImmediate(async function(){
         if(msg.startsWith('X012')){//--------------------[X012] CLEAR|CAPT|SOLVE
           conn.x012=true;
           X0();
-         }
+        }
         else if(msg.startsWith('X0')) X0();//ROVI_CLEAR
         else if(msg.startsWith('X1')) X1();//ROVI_CAPTURE
         else if(msg.startsWith('X2')) X2();//ROVI_SOLVE
@@ -424,8 +427,8 @@ setImmediate(async function(){
             let jr=Number(j6[0][0]);
             if(protocol.tflib.option.indexOf('deg')>=0) jr*=0.017453292519943295;
             reverse_frame_updater(jr);
-           }
-         }
+          }
+        }
         if(msgs.length==0) break; 
         msg=msgs.shift().trim();
         if(msg.length<2) break;
@@ -451,4 +454,9 @@ setImmediate(async function(){
       stat_out(false);
     });
   }).listen(Config.port);
+  setInterval(async ()=>{
+    if(Config.x1interlock.length>0){
+      Param.x1interlock=await rosNode.getParam(Config.x1interlock);
+    }
+  },1000);
 });
