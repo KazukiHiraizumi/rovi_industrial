@@ -233,10 +233,12 @@ setImmediate(async function(){
           else{
             if(Config.x1keys.length==0) respOK(conn,protocol);
             else{
-              let vals=Config.x1keys.map(k=>Score[k]);
+              let vals=Config.x1keys.map((k)=>{
+                return Score.hasOwnProperty(k)? Score[k]:0;
+              });
               respOK(conn,protocol,'['+vals.toString()+']');
-              }
-           }
+            }
+          }
         }
         else respNG(conn,protocol,912); //failed to capture
       });
@@ -456,7 +458,12 @@ setImmediate(async function(){
   }).listen(Config.port);
   setInterval(async ()=>{
     if(Config.x1interlock.length>0){
-      Param.x1interlock=await rosNode.getParam(Config.x1interlock);
+      try{
+        Param.x1interlock=await rosNode.getParam(Config.x1interlock);
+      }
+      catch(e){
+        Param.x1interlock=true;
+      }
     }
   },1000);
 });
