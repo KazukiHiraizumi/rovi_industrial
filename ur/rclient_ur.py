@@ -4,21 +4,25 @@ import numpy as np
 import roslib
 import rospy
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Bool
+from rovi_industrial import rtde_sock as comm
+from rovi_utils import tflib
+from scipy.spatial.transform import Rotation as R
 import time
 import sys
-from rovi_industrial import rtde_sock as comm
 
 Config={
   'robot_ip':'127.0.0.1',
   'joint_ids':['shoulder_pan_joint','shoulder_lift_joint','elbow_joint','wrist_1_joint','wrist_2_joint','wrist_3_joint'],
   'robot_recipe':'default.xml',
   'robot_port':30004,
+  'tcp0_frame_id':'tool0_controller',
   'copy':[
     {'param':'/dashboard/ind/rsocket/enable','input':'input_bit_register_64'},
     {'param':'/dashboard/ind/rovi/stat','input':'input_bit_register_65'},
     {'state':'payload_inertia[0]','input':'input_int_register_24','gain':10},
-  ]
+  ],
 }
 
 rospy.init_node('rclient_ur',anonymous=True)
@@ -29,6 +33,7 @@ try:
 except Exception as e:
   print("get_param exception:",e.args)
 pub_js=rospy.Publisher('/joint_states',JointState,queue_size=1)
+pub_tf=rospy.Publisher('/update/config_tf',TransformStamped,queue_size=1)
 pub_conn=rospy.Publisher('/rsocket/enable',Bool,queue_size=1)
 print("rclient_ur::",Config['robot_ip'])
 
@@ -55,16 +60,23 @@ while True:
 
   print("rclient_ur::comm connected",Config['robot_ip'])
 
-###Build code for interpreter(exec)##############
+###Code generator##############
+  pycode=''
   for obj in Config['copy']:
     lvar='comm.inregs.'+obj['input']
     exec(lvar+'=0')
     if 'param' in obj:
-      obj['cstr']=lvar+'=rospy.get_param("'+obj['param']+'")'
+      if len(pycode)>0: pycode=pycode+'\n'
+      pycode=pycode+lvar+'=rospy.get_param("'+obj['param']+'")'
     elif 'state' in obj:
-      obj['cstr']=lvar+'=int(comm.state.'+obj['state']+'*'+str(obj['gain'])+')'
-
+      if len(pycode)>0: pycode=pycode+'\n'
+      pycode=pycode+lvar+'=int(comm.state.'+obj['state']+'*'+str(obj['gain'])+')'
+  print('Code generator\n',pycode)
 ###Start Event Loop##############
+  conf_tf=rospy.get_param('/config_tf')
+  tcp0_id=Config['tcp0_frame_id']
+  tcpofs_pr=np.zeros(6)   #tcp_offset previous
+  pTf_pr=np.eye(4)   #inv(fTp) previous
   loop=True
   while True:
     rospy.sleep(0.05)
@@ -73,13 +85,33 @@ while True:
       break
     try:
       comm.receive()
-      update(comm.state.actual_q)
-      for obj in Config['copy']:
-        exec(obj['cstr'])
+    except Exception as e:
+      print('rclient_ur::rtde receive failed',e)
+      break
+    update(comm.state.actual_q)
+    if len(pycode)>0: exec(pycode)
+    try:
       comm.send()
     except Exception as e:
-      print('rclient_ur::rtde failed',e)
+      print('rclient_ur::rtde send failed',e)
       break
+    if tcp0_id in conf_tf:
+      tf=TransformStamped()
+      tf.header.stamp=rospy.Time.now()
+      tf.header.frame_id=conf_tf[tcp0_id]['parent_frame_id']
+      tf.child_frame_id=tcp0_id
+      bTp=np.eye(4)   #base To tcp
+      bTp[:3,:3]=R.from_rotvec(comm.state.actual_TCP_pose[3:]).as_matrix()
+      bTp[:3,3]=np.array(comm.state.actual_TCP_pose[:3])*1000
+      tcpofs=np.array(comm.state.tcp_offset)
+      if not np.array_equal(tcpofs,tcpofs_pr):
+        tcpofs_pr=tcpofs
+        fTp=np.eye(4)   #frange To tcp
+        fTp[:3,:3]=R.from_rotvec(tcpofs[3:]).as_matrix()
+        fTp[:3,3]=tcpofs[:3]*1000
+        pTf_pr=np.linalg.inv(fTp)
+      tf.transform=tflib.fromRT(bTp.dot(pTf_pr))
+      pub_tf.publish(tf);
 
   try:
     comm.pause()
