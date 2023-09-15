@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import numpy as np
 import roslib
@@ -75,8 +75,6 @@ while True:
 ###Start Event Loop##############
   conf_tf=rospy.get_param('/config_tf')
   tcp0_id=Config['tcp0_frame_id']
-  tcpofs_pr=np.zeros(6)   #tcp_offset previous
-  pTf_pr=np.eye(4)   #inv(fTp) previous
   loop=True
   while True:
     rospy.sleep(0.05)
@@ -103,14 +101,10 @@ while True:
       bTp=np.eye(4)   #base To tcp
       bTp[:3,:3]=R.from_rotvec(comm.state.actual_TCP_pose[3:]).as_matrix()
       bTp[:3,3]=np.array(comm.state.actual_TCP_pose[:3])*1000
-      tcpofs=np.array(comm.state.tcp_offset)
-      if not np.array_equal(tcpofs,tcpofs_pr):
-        tcpofs_pr=tcpofs
-        fTp=np.eye(4)   #frange To tcp
-        fTp[:3,:3]=R.from_rotvec(tcpofs[3:]).as_matrix()
-        fTp[:3,3]=tcpofs[:3]*1000
-        pTf_pr=np.linalg.inv(fTp)
-      tf.transform=tflib.fromRT(bTp.dot(pTf_pr))
+      fTp=np.eye(4)   #frange To tcp
+      fTp[:3,:3]=R.from_rotvec(comm.state.tcp_offset[3:]).as_matrix()
+      fTp[:3,3]=np.array(comm.state.tcp_offset[:3])*1000
+      tf.transform=tflib.fromRT(bTp.dot(tflib.invRT(fTp)))
       pub_tf.publish(tf);
 
   try:
